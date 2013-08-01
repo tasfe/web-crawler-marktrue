@@ -16,16 +16,30 @@ namespace WebCrawler.Core
         //private string m_sz
     }
 
+    struct UrlElem
+    {
+        public string szUrl;
+        public string szTitle;
+
+        public UrlElem(string title, string url)
+        {
+            szTitle = title;
+            szUrl = url;
+        }
+    }
+
     public class SearchCrawlerWorker
     {
 
-        private static Queue<string> s_oURLQue = new Queue<string>(c_nMaxQueSize);
+        private static Queue<UrlElem> s_oURLQue = new Queue<UrlElem>(c_nMaxQueSize);
 
         private static Semaphore s_oDeQueSema = new Semaphore(0, c_nMaxQueSize);
 
         private static Semaphore s_oEnQueSema = new Semaphore(c_nMaxQueSize, c_nMaxQueSize);
 
-        private static List<string> s_oURLList = new List<string>();
+        private static HashSet<string> s_oURLSet = new HashSet<string>();
+
+        private static List<UrlElem> s_oUrlElemList = new List<UrlElem>();
 
         private int m_cntRunningThreads;
 
@@ -61,15 +75,22 @@ namespace WebCrawler.Core
                 // get a szURL from queue
                 --m_cntRunningThreads;
                 s_oDeQueSema.WaitOne();
-                string szUrl = s_oURLQue.Dequeue();
+                UrlElem oUrl = s_oURLQue.Dequeue();
                 s_oEnQueSema.Release();
                 ++m_cntRunningThreads;
 
                 // working
                 // download page
-                szContent = DownLoadPage(szUrl);
+                szContent = DownLoadPage(oUrl.szUrl);
+
+                // invilid page
+                if (szContent.Length < 1)
+                {
+                    continue;
+                }
+
                 // analyze and enqueue the url
-                AnalyzeContent(szUrl, szContent);
+                AnalyzeContent(oUrl.szUrl, szContent);
             }
         }
 
@@ -77,7 +98,7 @@ namespace WebCrawler.Core
         {
             Thread[] Threads = new Thread[m_cntRunningThreads];
             s_oEnQueSema.WaitOne();
-            s_oURLQue.Enqueue(szStartUrl);
+            s_oURLQue.Enqueue(new UrlElem(null, szStartUrl));
             s_oDeQueSema.Release();
             for (int i = 0; i < m_cntRunningThreads; ++i)
             {
@@ -88,22 +109,43 @@ namespace WebCrawler.Core
 
         private string DownLoadPage(string szUrl)
         {
+            HttpWebRequest oWebReq = null;
+            HttpWebResponse oWebResp = null;
+            StreamReader oWebReadStm = null;
+
             char[] cbuffer = new char[1024];
             string szRetBuffer = "";
             Uri oUri = new Uri(szUrl);
-            HttpWebRequest oWebReq = (HttpWebRequest)WebRequest.Create(oUri);
-            HttpWebResponse oWebResp = (HttpWebResponse)oWebReq.GetResponse();
-            StreamReader oWebReadStm = new StreamReader(oWebResp.GetResponseStream());
-            int nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
 
-            while (nByteRead != 0)
+            try
             {
-                szRetBuffer.Insert(szRetBuffer.Length, new string(cbuffer, 0, nByteRead));
-                nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
-            }
+                oWebReq = (HttpWebRequest)WebRequest.Create(oUri);
+                oWebResp = (HttpWebResponse)oWebReq.GetResponse();
+                oWebReadStm = new StreamReader(oWebResp.GetResponseStream());
+                int nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
 
-            oWebReadStm.Close();
-            oWebResp.Close();
+                while (nByteRead != 0)
+                {
+                    szRetBuffer = szRetBuffer.Insert(szRetBuffer.Length, new string(cbuffer, 0, nByteRead));
+                    nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
+                }
+
+            }
+            catch (Exception e)
+            {
+                ;
+            }
+            finally
+            {
+                if (oWebReadStm != null)
+                {
+                    oWebReadStm.Close();
+                }
+                if (oWebResp != null)
+                {
+                    oWebResp.Close();
+                }
+            }
             return szRetBuffer;
         }
 
@@ -174,20 +216,21 @@ namespace WebCrawler.Core
                     link = link.Substring(0, index);
                 }
 
-                if (s_oURLList.Contains(link))
-                {
-                    continue;
-                }
-
                 if ((link = FormatURL(link)) == null)
                 {
                     continue;
                 }
-                s_oURLList.Add(link);
+
+                if (s_oURLSet.Contains(link))
+                {
+                    continue;
+                }
+                s_oURLSet.Add(link);
+                s_oUrlElemList.Add(new UrlElem(null, link));
 
                 // EnQueue
                 s_oEnQueSema.WaitOne();
-                s_oURLQue.Enqueue(link);
+                s_oURLQue.Enqueue(new UrlElem(null, link));
                 s_oDeQueSema.Release();
             }
         }
