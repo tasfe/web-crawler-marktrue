@@ -16,7 +16,7 @@ namespace WebCrawler.Core
         //private string m_sz
     }
 
-    struct UrlElem
+    public struct UrlElem
     {
         public string szUrl;
         public string szTitle;
@@ -31,7 +31,7 @@ namespace WebCrawler.Core
     public class SearchCrawlerWorker
     {
 
-        private static Queue<UrlElem> s_oURLQue = new Queue<UrlElem>(c_nMaxQueSize);
+        private static Queue<string> s_oURLQue = new Queue<string>(c_nMaxQueSize);
 
         private static Semaphore s_oDeQueSema = new Semaphore(0, c_nMaxQueSize);
 
@@ -41,19 +41,27 @@ namespace WebCrawler.Core
 
         private static List<UrlElem> s_oUrlElemList = new List<UrlElem>();
 
+        public static List<UrlElem> UrlElemList
+        {
+            get
+            {
+                return s_oUrlElemList;
+            }
+        }
+
         private int m_cntRunningThreads;
 
         public const int c_nMaxQueSize = 0x10000;
 
         public const int c_nMaxWorker = 1024;
 
-        public SearchCrawlerWorker(string szStartUrl)
+        public SearchCrawlerWorker(string szTitle, string szStartUrl)
         {
             m_cntRunningThreads = 1;
-            Init(szStartUrl);
+            Init(szTitle, szStartUrl);
         }
 
-        public SearchCrawlerWorker(string szStartUrl, int nWorker)
+        public SearchCrawlerWorker(string szTitle, string szStartUrl, int nWorker)
         {
             if (nWorker <= 0)
             {
@@ -64,7 +72,7 @@ namespace WebCrawler.Core
                 nWorker = c_nMaxWorker;
             }
             m_cntRunningThreads = nWorker;
-            Init(szStartUrl);
+            Init(szTitle, szStartUrl);
         }
 
         public void Run()
@@ -75,13 +83,13 @@ namespace WebCrawler.Core
                 // get a szURL from queue
                 --m_cntRunningThreads;
                 s_oDeQueSema.WaitOne();
-                UrlElem oUrl = s_oURLQue.Dequeue();
+                string szUrl = s_oURLQue.Dequeue();
                 s_oEnQueSema.Release();
                 ++m_cntRunningThreads;
 
                 // working
                 // download page
-                szContent = DownLoadPage(oUrl.szUrl);
+                szContent = DownLoadPage(szUrl);
 
                 // invilid page
                 if (szContent.Length < 1)
@@ -90,20 +98,31 @@ namespace WebCrawler.Core
                 }
 
                 // analyze and enqueue the url
-                AnalyzeContent(oUrl.szUrl, szContent);
+                AnalyzeContent(szUrl, szContent);
             }
         }
 
-        private void Init(string szStartUrl)
+        private void Init(string szTitle, string szStartUrl)
         {
-            Thread[] Threads = new Thread[m_cntRunningThreads];
+            int i;
+            int Threadnum = m_cntRunningThreads;
+            Thread[] Threads = new Thread[Threadnum];
             s_oEnQueSema.WaitOne();
-            s_oURLQue.Enqueue(new UrlElem(null, szStartUrl));
+            s_oURLQue.Enqueue(szStartUrl);
             s_oDeQueSema.Release();
-            for (int i = 0; i < m_cntRunningThreads; ++i)
+            for (i = 0; i < Threadnum; ++i)
             {
                 Threads[i] = new Thread(new ThreadStart(this.Run));
                 Threads[i].Start();
+            }
+            i = 0;
+            while (true)
+            {
+                for (int j = 0;i < s_oUrlElemList.Count && j < 50; ++i, ++j)
+                {
+                    Console.WriteLine("title: {0}, url: {1}", s_oUrlElemList[i].szTitle, s_oUrlElemList[i].szUrl);
+                }
+                Thread.Sleep(5000);
             }
         }
 
@@ -121,7 +140,7 @@ namespace WebCrawler.Core
             {
                 oWebReq = (HttpWebRequest)WebRequest.Create(oUri);
                 oWebResp = (HttpWebResponse)oWebReq.GetResponse();
-                oWebReadStm = new StreamReader(oWebResp.GetResponseStream());
+                oWebReadStm = new StreamReader(oWebResp.GetResponseStream(), Encoding.Default);
                 int nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
 
                 while (nByteRead != 0)
@@ -151,10 +170,21 @@ namespace WebCrawler.Core
 
         private void AnalyzeContent(string szPageUrl, string szContent)
         {
+            string title;
             string link;
             Uri oUri = new Uri(szPageUrl);
-            Regex oReg = new Regex("<a\\s+href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-            MatchCollection oMatchCol = oReg.Matches(szContent);
+            Regex oLinkReg = new Regex("<a\\s+href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            Regex oTitleReg = new Regex("\\<title\\>.*\\</title\\>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            MatchCollection oMatchCol = oLinkReg.Matches(szContent);
+            Match oMatchTitle = oTitleReg.Match(szContent);
+            title = oMatchTitle.Groups[0].Value;
+            if (title != "")
+            {
+                title = title.Split(new char[] { '<', '>' })[2];
+            }
+            //
+            s_oUrlElemList.Add(new UrlElem(title, szPageUrl));
+            //
             foreach (Match omatch in oMatchCol)
             {
                 link = omatch.Groups[1].Value;
@@ -226,11 +256,10 @@ namespace WebCrawler.Core
                     continue;
                 }
                 s_oURLSet.Add(link);
-                s_oUrlElemList.Add(new UrlElem(null, link));
 
                 // EnQueue
                 s_oEnQueSema.WaitOne();
-                s_oURLQue.Enqueue(new UrlElem(null, link));
+                s_oURLQue.Enqueue(link);
                 s_oDeQueSema.Release();
             }
         }
