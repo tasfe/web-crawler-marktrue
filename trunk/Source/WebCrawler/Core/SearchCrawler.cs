@@ -182,21 +182,17 @@ namespace WebCrawler.Core
             string link;
             Uri oUri = new Uri(szPageUrl);
             //Regex oLinkReg = new Regex("<a\\s+href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-            Regex oLinkReg = new Regex("(?<=(?i)<(a|img)/s+[^>]*/s*(href|src)=\")[^>]+?(?=\"|')(?#>[^>]+</a>)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-            Regex oTitleReg = new Regex("\\<title\\>.*\\</title\\>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+            Regex oLinkReg = new Regex("<a(\\s+.+?\\s+|\\s+)href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            Regex oTitleReg = new Regex("<title>((.|\\s)*?)</title>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
             MatchCollection oMatchCol = oLinkReg.Matches(szContent);
             Match oMatchTitle = oTitleReg.Match(szContent);
-            title = oMatchTitle.Groups[0].Value;
-            if (title != "")
-            {
-                title = title.Split(new char[] { '<', '>' })[2];
-            }
+            title = oMatchTitle.Groups[1].Value;
             //
             s_oUrlElemList.Add(new UrlElem(title, szPageUrl));
             //
             foreach (Match omatch in oMatchCol)
             {
-                link = omatch.Groups[1].Value;
+                link = omatch.Groups[2].Value;
                 link = link.Trim();
 
                 if (link.Length < 1)
