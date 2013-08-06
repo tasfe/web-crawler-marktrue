@@ -10,7 +10,7 @@ namespace ConsoleTest
     {
         static void Main(string[] args)
         {
-            SearchCrawlerWorker oSCWorker = new SearchCrawlerWorker("renren", "http://www.renren.com/", 20);
+            SearchCrawlerWorker oSCWorker = new SearchCrawlerWorker("hello", "http://localhost:13794/TestWebSite4Crawler/Default.aspx", 4);
         }
     }
 }
