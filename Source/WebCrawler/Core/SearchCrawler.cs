@@ -122,6 +122,14 @@ namespace WebCrawler.Core
                 {
                     Console.WriteLine("title: {0}, url: {1}", s_oUrlElemList[i].szTitle, s_oUrlElemList[i].szUrl);
                 }
+                if (m_cntRunningThreads <= 0)
+                {
+                    for (i = 0; i < Threadnum; ++i)
+                    {
+                        Threads[i].Abort();
+                    }
+                    break;
+                }
                 Thread.Sleep(5000);
             }
         }
@@ -173,7 +181,8 @@ namespace WebCrawler.Core
             string title;
             string link;
             Uri oUri = new Uri(szPageUrl);
-            Regex oLinkReg = new Regex("<a\\s+href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            //Regex oLinkReg = new Regex("<a\\s+href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            Regex oLinkReg = new Regex("(?<=(?i)<(a|img)/s+[^>]*/s*(href|src)=\")[^>]+?(?=\"|')(?#>[^>]+</a>)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
             Regex oTitleReg = new Regex("\\<title\\>.*\\</title\\>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
             MatchCollection oMatchCol = oLinkReg.Matches(szContent);
             Match oMatchTitle = oTitleReg.Match(szContent);
@@ -234,8 +243,9 @@ namespace WebCrawler.Core
                         {
                             String path = file.Substring(0,
                               file.LastIndexOf('/') + 1);
-                            link = "http://" + oUri.Host + ":"
-                              + oUri.Port + path + link;
+                            //link = "http://" + oUri.Host + ":"
+                            // + oUri.Port + path + link;
+                            link = path + link;
                         }
                     }
                 }
