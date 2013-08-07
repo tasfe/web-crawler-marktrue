@@ -9,11 +9,11 @@ using System.IO;
 
 namespace WebCrawler.Core
 {
-    class SearchCrawler
+    class SearchCrawlerDBConnect
     {
         private string m_szStartUrl;
-        private int m_nMaxProcessdUrl;
-        //private string m_sz
+        private string m_szUser;
+        private string m_szPassword;
     }
 
     public struct UrlElem
@@ -41,6 +41,14 @@ namespace WebCrawler.Core
 
         private static List<UrlElem> s_oUrlElemList = new List<UrlElem>();
 
+        private static int s_nMaxProcessdUrl = 0x10000;
+
+        private int m_cntRunningThreads;
+
+        public const int c_nMaxQueSize = 0x10000;
+
+        public const int c_nMaxWorker = 0x400;
+
         public static List<UrlElem> UrlElemList
         {
             get
@@ -49,19 +57,20 @@ namespace WebCrawler.Core
             }
         }
 
-        private int m_cntRunningThreads;
-
-        public const int c_nMaxQueSize = 0x10000;
-
-        public const int c_nMaxWorker = 1024;
-
         public SearchCrawlerWorker(string szTitle, string szStartUrl)
         {
             m_cntRunningThreads = 1;
             Init(szTitle, szStartUrl);
         }
 
-        public SearchCrawlerWorker(string szTitle, string szStartUrl, int nWorker)
+        public SearchCrawlerWorker(string szTitle, string szStartUrl, int nMaxProcessdUrl)
+        {
+            m_cntRunningThreads = 1;
+            s_nMaxProcessdUrl = nMaxProcessdUrl;
+            Init(szTitle, szStartUrl);
+        }
+
+        public SearchCrawlerWorker(string szTitle, string szStartUrl, int nMaxProcessdUrl, int nWorker)
         {
             if (nWorker <= 0)
             {
@@ -72,6 +81,7 @@ namespace WebCrawler.Core
                 nWorker = c_nMaxWorker;
             }
             m_cntRunningThreads = nWorker;
+            s_nMaxProcessdUrl = nMaxProcessdUrl;
             Init(szTitle, szStartUrl);
         }
 
@@ -124,6 +134,10 @@ namespace WebCrawler.Core
                 }
                 if (m_cntRunningThreads <= 0)
                 {
+                    for (; i < s_oUrlElemList.Count; ++i)
+                    {
+                        Console.WriteLine("title: {0}, url: {1}", s_oUrlElemList[i].szTitle, s_oUrlElemList[i].szUrl);
+                    }
                     for (i = 0; i < Threadnum; ++i)
                     {
                         Threads[i].Abort();
@@ -148,7 +162,9 @@ namespace WebCrawler.Core
             {
                 oWebReq = (HttpWebRequest)WebRequest.Create(oUri);
                 oWebResp = (HttpWebResponse)oWebReq.GetResponse();
-                oWebReadStm = new StreamReader(oWebResp.GetResponseStream(), Encoding.Default);
+                string[] tmp = oWebResp.ContentType.Split(new string[] {"charset="}, StringSplitOptions.RemoveEmptyEntries);
+                string szContentType = tmp[tmp.Length - 1];
+                oWebReadStm = new StreamReader(oWebResp.GetResponseStream(), Encoding.GetEncoding(szContentType));
                 int nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
 
                 while (nByteRead != 0)
@@ -181,7 +197,6 @@ namespace WebCrawler.Core
             string title;
             string link;
             Uri oUri = new Uri(szPageUrl);
-            //Regex oLinkReg = new Regex("<a\\s+href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
             Regex oLinkReg = new Regex("<a(\\s+.+?\\s+|\\s+)href\\s*=\\s*\"?(.*?)[\"|>]", RegexOptions.IgnoreCase | RegexOptions.Compiled);
             Regex oTitleReg = new Regex("<title>((.|\\s)*?)</title>", RegexOptions.Compiled | RegexOptions.IgnoreCase);
             MatchCollection oMatchCol = oLinkReg.Matches(szContent);
