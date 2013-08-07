@@ -6,25 +6,88 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Net;
 using System.IO;
+using System.Data.Sql;
+using System.Data.SqlClient;
 
 namespace WebCrawler.Core
 {
-    class SearchCrawlerDBConnect
+    class SearchCrawlerDBConnection
     {
-        private string m_szStartUrl;
-        private string m_szUser;
-        private string m_szPassword;
+
+        private string m_szDBSrc = "1305LX\\SQL2008EXPRESS";
+
+        private string m_szDBName = "CrawlerData";
+
+        private string m_szUser = "sa";
+
+        private string m_szPassword = "luxiao!234";
+
+        private string m_szConStr;
+
+        private SqlConnection oSqlCon;
+
+        public SearchCrawlerDBConnection()
+        {
+            Init();
+        }
+
+        public SearchCrawlerDBConnection(string szDataSrc, string szName, string szUser, string szPwd)
+        {
+            m_szDBSrc = szDataSrc;
+            m_szDBName = szName;
+            m_szUser = szUser;
+            m_szPassword = szPwd;
+            Init();
+        }
+
+        private void Init()
+        {
+            m_szConStr = "Data Source=" + m_szDBSrc + 
+                ";Database=" + m_szDBName + 
+                ";Uid=" + m_szUser +
+                ";Pwd=" + m_szPassword + ";";
+            oSqlCon = new SqlConnection(m_szConStr);
+        }
+
+        public void Connect()
+        {
+            oSqlCon.Open();
+        }
+
+        public void Close()
+        {
+            oSqlCon.Close();
+        }
+
+        public void Write2DB(UrlElem oUrlElem)
+        {
+            SqlCommand oSqlChk = new SqlCommand("select * from UrlData where url = '" + oUrlElem.szUrl + "'", oSqlCon);
+            SqlDataReader oDataReader = oSqlChk.ExecuteReader();
+            bool k = oDataReader.Read();
+            oDataReader.Close();
+            if (k)
+            {
+                return;
+            }
+            SqlCommand oSqlCmd = new SqlCommand("insert UrlData(url,title,html) values('" + oUrlElem.szUrl + "','" + 
+                oUrlElem.szTitle + "','" + " " + "')", oSqlCon);
+                //oUrlElem.szTitle + "','" + oUrlElem.szText + "')", oSqlCon);
+            oSqlCmd.ExecuteNonQuery();
+        }
+
     }
 
     public struct UrlElem
     {
         public string szUrl;
         public string szTitle;
+        public string szText;
 
-        public UrlElem(string title, string url)
+        public UrlElem(string title, string url, string text)
         {
             szTitle = title;
             szUrl = url;
+            szText = text;
         }
     }
 
@@ -33,11 +96,17 @@ namespace WebCrawler.Core
 
         private static Queue<string> s_oURLQue = new Queue<string>(c_nMaxQueSize);
 
-        private static Semaphore s_oDeQueSema = new Semaphore(0, c_nMaxQueSize);
+        private static Semaphore s_oElemDeQueSema = new Semaphore(0, c_nMaxQueSize);
 
-        private static Semaphore s_oEnQueSema = new Semaphore(c_nMaxQueSize, c_nMaxQueSize);
+        private static Semaphore s_oElemEnQueSema = new Semaphore(c_nMaxQueSize, c_nMaxQueSize);
+
+        private static Semaphore s_oUrlDeQueSema = new Semaphore(0, c_nMaxQueSize);
+
+        private static Semaphore s_oUrlEnQueSema = new Semaphore(c_nMaxQueSize, c_nMaxQueSize);
 
         private static HashSet<string> s_oURLSet = new HashSet<string>();
+
+        private static Queue<UrlElem> s_oUrlElemQue = new Queue<UrlElem>(c_nMaxQueSize);
 
         private static List<UrlElem> s_oUrlElemList = new List<UrlElem>();
 
@@ -85,16 +154,16 @@ namespace WebCrawler.Core
             Init(szTitle, szStartUrl);
         }
 
-        public void Run()
+        public void Crawl()
         {
             string szContent;
             while (true)
             {
                 // get a szURL from queue
                 --m_cntRunningThreads;
-                s_oDeQueSema.WaitOne();
+                s_oUrlDeQueSema.WaitOne();
                 string szUrl = s_oURLQue.Dequeue();
-                s_oEnQueSema.Release();
+                s_oUrlEnQueSema.Release();
                 ++m_cntRunningThreads;
 
                 // working
@@ -112,36 +181,68 @@ namespace WebCrawler.Core
             }
         }
 
+        public void SaveData()
+        {
+            UrlElem oUrlElem;
+            SearchCrawlerDBConnection oDBCon = new SearchCrawlerDBConnection();
+            try
+            {
+                oDBCon.Connect();
+                while (true)
+                {
+                    s_oElemDeQueSema.WaitOne();
+                    oUrlElem = s_oUrlElemQue.Dequeue();
+                    s_oElemEnQueSema.Release();
+                    oDBCon.Write2DB(oUrlElem);
+                }
+            }
+            catch (Exception e)
+            {
+                oDBCon.Close();
+            }
+        }
+
         private void Init(string szTitle, string szStartUrl)
         {
             int i;
             int Threadnum = m_cntRunningThreads;
             Thread[] Threads = new Thread[Threadnum];
-            s_oEnQueSema.WaitOne();
+            s_oUrlEnQueSema.WaitOne();
             s_oURLQue.Enqueue(szStartUrl);
-            s_oDeQueSema.Release();
+            s_oUrlDeQueSema.Release();
             for (i = 0; i < Threadnum; ++i)
             {
-                Threads[i] = new Thread(new ThreadStart(this.Run));
+                Threads[i] = new Thread(new ThreadStart(this.Crawl));
                 Threads[i].Start();
             }
+            Thread oDBWriteThd = new Thread(new ThreadStart(this.SaveData));
+            oDBWriteThd.Start();
             i = 0;
             while (true)
             {
-                for (int j = 0;i < s_oUrlElemList.Count && j < 50; ++i, ++j)
+                /*
+                for (int j = 0;i < s_oUrlElemQue.Count && j < 50; ++i, ++j)
                 {
-                    Console.WriteLine("title: {0}, url: {1}", s_oUrlElemList[i].szTitle, s_oUrlElemList[i].szUrl);
+                    Console.WriteLine("title: {0}, url: {1}", s_oUrlElemQue[i].szTitle, s_oUrlElemQue[i].szUrl);
                 }
+                //*/
                 if (m_cntRunningThreads <= 0)
                 {
-                    for (; i < s_oUrlElemList.Count; ++i)
+                    /*
+                    for (; i < s_oUrlElemQue.Count; ++i)
                     {
-                        Console.WriteLine("title: {0}, url: {1}", s_oUrlElemList[i].szTitle, s_oUrlElemList[i].szUrl);
+                        Console.WriteLine("title: {0}, url: {1}", s_oUrlElemQue[i].szTitle, s_oUrlElemQue[i].szUrl);
                     }
+                    //*/
                     for (i = 0; i < Threadnum; ++i)
                     {
                         Threads[i].Abort();
                     }
+                    //while (oDBWriteThd.ThreadState != ThreadState.WaitSleepJoin)
+                    //{
+                        //Thread.Sleep(1000);
+                    //}
+                    //oDBWriteThd.Abort();
                     break;
                 }
                 Thread.Sleep(5000);
@@ -162,9 +263,18 @@ namespace WebCrawler.Core
             {
                 oWebReq = (HttpWebRequest)WebRequest.Create(oUri);
                 oWebResp = (HttpWebResponse)oWebReq.GetResponse();
-                string[] tmp = oWebResp.ContentType.Split(new string[] {"charset="}, StringSplitOptions.RemoveEmptyEntries);
+                string[] tmp = oWebResp.ContentType.Split(new string[] { "charset=" }, StringSplitOptions.RemoveEmptyEntries);
                 string szContentType = tmp[tmp.Length - 1];
-                oWebReadStm = new StreamReader(oWebResp.GetResponseStream(), Encoding.GetEncoding(szContentType));
+                Encoding encode;
+                if (szContentType.ToLower() == "text/html")
+                {
+                    encode = Encoding.Default;
+                }
+                else
+                {
+                    encode = Encoding.GetEncoding(szContentType);
+                }
+                oWebReadStm = new StreamReader(oWebResp.GetResponseStream(), encode);
                 int nByteRead = oWebReadStm.Read(cbuffer, 0, 1024);
 
                 while (nByteRead != 0)
@@ -202,9 +312,14 @@ namespace WebCrawler.Core
             MatchCollection oMatchCol = oLinkReg.Matches(szContent);
             Match oMatchTitle = oTitleReg.Match(szContent);
             title = oMatchTitle.Groups[1].Value;
+            title = title.Trim();
             //
-            s_oUrlElemList.Add(new UrlElem(title, szPageUrl));
+            UrlElem urlElem = new UrlElem(title, szPageUrl, szContent.Replace("\r\n", " ").Replace('\'','\"'));
+            s_oElemEnQueSema.WaitOne();
+            s_oUrlElemQue.Enqueue(urlElem);
+            s_oElemDeQueSema.Release();
             //
+            s_oUrlElemList.Add(urlElem);
             foreach (Match omatch in oMatchCol)
             {
                 link = omatch.Groups[2].Value;
@@ -279,9 +394,9 @@ namespace WebCrawler.Core
                 s_oURLSet.Add(link);
 
                 // EnQueue
-                s_oEnQueSema.WaitOne();
+                s_oUrlEnQueSema.WaitOne();
                 s_oURLQue.Enqueue(link);
-                s_oDeQueSema.Release();
+                s_oUrlDeQueSema.Release();
             }
         }
 
